@@ -1,5 +1,9 @@
 <div align="center">
 
+<img src="social_preview.png" alt="E.P.G. — Entropy Password Generator" width="100%">
+
+<br>
+
 # 🔐 E.P.G. — Entropy Password Generator
 **Десктопный генератор паролей для Windows на базе криптографического пула энтропии**
 
@@ -9,7 +13,6 @@
 [![UI](https://img.shields.io/badge/GUI-pywebview%20%7C%20HTML%2FJS-161b22?style=flat-square)]()
 
 </div>
-
 ---
 
 Локальная утилита под Windows для генерации криптографически стойких паролей. Вместо того чтобы полагаться на один базовый вызов ГПСЧ, **E.P.G.** использует собственный многопоточный движок (`entropy_engine.py`), который непрерывно собирает и микширует энтропию из нескольких независимых системных источников.
