@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Энтропийный движок — проверка</title>
+    <style>
+        /* Palette/fonts lifted from FreeNet_Guidebook.html's :root - same
+           variables, so this stays visually consistent with the Guidebook
+           rather than approximating it from memory. */
+        :root {
+            --bg:        #0a0c10;
+            --bg2:       #161b22;
+            --bg3:       #21262d;
+            --border:    #30363d;
+            --border-a:  rgba(48,54,61,0.6);
+            --text:      #c9d1d9;
+            --accent:    #2de2e6;
+            --accent2:   #58a6ff;
+            --accent-red: #ff2e4d;
+            --accent-yellow: #fcee0a;
+            --warn:      #d29922;
+            --muted:     #8b949e;
+            --dim:       #484f58;
+            --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+            --font-body: 'DM Sans', sans-serif;
+            --font-head: 'JetBrains Mono', monospace;
+        }
+
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        ::-webkit-scrollbar { width: 10px; height: 10px; }
+        ::-webkit-scrollbar-track { background: var(--bg); border-left: 1px solid var(--border-a); }
+        ::-webkit-scrollbar-thumb { background: var(--dim); }
+        ::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+        * { scrollbar-width: thin; scrollbar-color: var(--dim) var(--bg); }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--font-body);
+            font-size: 15px;
+            line-height: 1.6;
+            padding: 20px;
+        }
+
+        /* ===========================================================
+           BACKGROUND LAYER - independent of everything below. Only
+           touches #bgCanvas; the interactive UI never needs to know
+           it's there. Edit this block (and its matching JS block,
+           marked the same way) without touching anything else.
+           =========================================================== */
+        #bgCanvas {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 0;
+            opacity: 0.12;
+            pointer-events: none;
+        }
+
+        /* ===========================================================
+           CONTENT LAYER - everything interactive sits above the
+           background via its own stacking context, so the two layers
+           stay independently editable rather than relying on DOM order.
+           =========================================================== */
+        .content {
+            position: relative;
+            z-index: 1;
+        }
+
+        .scanlines {
+            position: fixed;
+            inset: 0;
+            background:
+                    linear-gradient(rgba(0,0,0,0) 50%, rgba(0,0,0,0.08) 50%),
+                    linear-gradient(90deg, rgba(255,0,0,0.02), rgba(0,255,0,0.01), rgba(0,0,255,0.02));
+            background-size: 100% 4px, 3px 100%;
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        .panel {
+            background: rgba(22,27,34,0.55);
+            backdrop-filter: blur(6px);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+        }
+
+        .row { display: flex; align-items: center; gap: 10px; }
+        .row-between { display: flex; align-items: center; justify-content: space-between; }
+        .mt { margin-top: 12px; }
+
+        button {
+            font-family: var(--font-head);
+            background: var(--bg3);
+            color: var(--accent);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 8px 14px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: text-shadow .15s, border-color .15s;
+        }
+        button:hover { text-shadow: 0 0 8px var(--accent); border-color: var(--accent); }
+        button:active { transform: translateY(1px); }
+        button.icon-btn { padding: 6px 10px; font-size: 12px; color: var(--muted); }
+        button.icon-btn:hover { color: var(--accent); }
+
+        .daemon-btn { font-weight: 600; }
+        .daemon-btn.running { color: var(--accent); border-color: var(--accent); }
+        .daemon-btn.stopped { color: var(--accent-red); border-color: var(--accent-red); }
+
+        .mono { font-family: var(--font-mono); }
+        #poolPreview { margin-top: 14px; font-family: var(--font-mono); font-size: 13px; }
+        #lastStir { margin-top: 4px; color: var(--muted); font-size: 12px; }
+
+        .divider { border: none; border-top: 1px solid var(--border-a); margin: 14px 0; }
+
+        .charset-row { display: flex; gap: 18px; flex-wrap: wrap; }
+        .charset-row label { display: flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 13px; cursor: pointer; }
+        .charset-row input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; cursor: pointer; }
+
+        .length-row { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+        .length-row label { color: var(--muted); font-size: 13px; }
+        #lengthInput {
+            width: 60px; background: var(--bg); color: var(--text);
+            border: 1px solid var(--border); border-radius: 6px;
+            padding: 6px 8px; font-family: var(--font-mono); font-size: 13px;
+        }
+        #lengthInput:focus { outline: none; border-color: var(--accent); }
+
+        .password-field {
+            margin-top: 14px;
+            background: var(--bg);
+            border: 1px solid var(--accent);
+            border-radius: 8px;
+            padding: 14px;
+            font-family: var(--font-mono);
+            font-size: 19px;
+            font-weight: 700;
+            color: var(--accent);
+            word-break: break-all;
+            box-shadow: inset 2px 0 0 var(--accent);
+        }
+
+        .actions-row { display: flex; gap: 10px; margin-top: 12px; }
+        .actions-row button { flex: 1; }
+
+        #strengthLbl { margin-top: 10px; font-size: 13px; color: var(--muted); }
+        #strengthLbl.weak { color: var(--accent-red); }
+        #strengthLbl.moderate { color: var(--warn); }
+        #strengthLbl.strong { color: var(--accent2); }
+        #strengthLbl.very-strong { color: var(--accent); }
+
+        .checks-btn-row { display: flex; justify-content: center; margin-top: 20px; }
+
+        .sources-log {
+            margin-top: 12px;
+            background: var(--bg);
+            border: 1px solid var(--border-a);
+            border-radius: 8px;
+            padding: 10px 12px;
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--muted);
+            max-height: 160px;
+            overflow-y: auto;
+        }
+        .sources-log .ts { color: var(--dim); }
+        .sources-log .trig { color: var(--accent2); }
+        .sources-log-title { font-size: 12px; color: var(--muted); margin-top: 18px; margin-bottom: 4px; }
+
+        .modal-overlay {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.65);
+            display: flex; align-items: center; justify-content: center;
+            z-index: 50;
+        }
+        .modal-overlay.hidden { display: none; }
+        .modal {
+            background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+            padding: 20px; max-width: 460px; width: 90%; max-height: 80vh; overflow-y: auto;
+        }
+        .modal h3 { font-family: var(--font-head); color: var(--accent); margin-bottom: 12px; }
+        .modal p { margin-bottom: 10px; font-size: 14px; }
+        .modal button { margin-top: 12px; }
+        .modal pre { font-family: var(--font-mono); font-size: 12px; white-space: pre-wrap; }
+        .check-line.ok { color: var(--accent); }
+        .check-line.fail { color: var(--accent-red); }
+    </style>
+</head>
+<body>
+<canvas id="bgCanvas" aria-hidden="true"></canvas>
+<div class="scanlines"></div>
+
+<div class="content">
+
+    <div class="panel">
+        <div class="row-between">
+            <div></div>
+            <div class="row" style="gap:6px">
+                <button class="icon-btn" id="helpBtn">?</button>
+                <button class="icon-btn" id="langBtn">EN</button>
+            </div>
+        </div>
+
+        <div class="row mt">
+            <button class="daemon-btn stopped" id="daemonBtn"></button>
+        </div>
+
+        <div id="poolPreview"></div>
+        <div id="lastStir"></div>
+
+        <hr class="divider">
+
+        <div class="charset-row">
+            <label><input type="checkbox" id="lowerChk" checked> a-z</label>
+            <label><input type="checkbox" id="upperChk" checked> A-Z</label>
+            <label><input type="checkbox" id="digitsChk" checked> 0-9</label>
+            <label><input type="checkbox" id="symbolsChk" checked> !@#</label>
+        </div>
+
+        <div class="length-row">
+            <label id="lengthLbl"></label>
+            <input type="number" id="lengthInput" value="20" min="4" max="128">
+        </div>
+
+        <div class="password-field" id="passwordField"></div>
+
+        <div class="actions-row">
+            <button id="copyBtn"></button>
+            <button id="regenBtn"></button>
+        </div>
+
+        <div id="strengthLbl"></div>
+    </div>
+
+    <div class="checks-btn-row">
+        <button id="checksBtn"></button>
+    </div>
+
+    <div class="sources-log-title" id="sourcesLogTitle"></div>
+    <div class="sources-log" id="sourcesLog"></div>
+
+    <div class="modal-overlay hidden" id="helpModal">
+        <div class="modal">
+            <h3 id="helpTitle"></h3>
+            <p id="helpBody" style="white-space: pre-line"></p>
+            <button id="closeHelp"></button>
+        </div>
+    </div>
+
+    <div class="modal-overlay hidden" id="checksModal">
+        <div class="modal">
+            <h3 id="checksTitle"></h3>
+            <pre id="checksOutput"></pre>
+            <button id="closeChecks"></button>
+        </div>
+    </div>
+
+</div><!-- /.content -->
+
+<script>
+    /* ===============================================================
+       BACKGROUND LAYER (MATRIX) - ported from FreeNet_Guidebook.html's
+       own matrixLoop/drawMatrix, same algorithm and colors. Touches only
+       #bgCanvas; nothing below this block reads or depends on it, and
+       this block never touches anything below - edit either half without
+       the other.
+       =============================================================== */
+    (function () {
+        const bgCvs = document.getElementById("bgCanvas");
+        const bgCtx = bgCvs.getContext("2d");
+        let bgDrops = [];
+
+        function initCanvas() {
+            bgCvs.width = window.innerWidth;
+            bgCvs.height = window.innerHeight;
+            bgDrops = new Array(Math.floor(bgCvs.width / 14)).fill(1);
+        }
+
+        function drawMatrix() {
+            bgCtx.fillStyle = "rgba(10,12,16,0.05)";
+            bgCtx.fillRect(0, 0, bgCvs.width, bgCvs.height);
+            bgCtx.font = "14px monospace";
+            bgDrops.forEach((y, i) => {
+                bgCtx.fillStyle = Math.random() < 0.06 ? "#ff2e4d" : "#2de2e6";
+                bgCtx.fillText(Math.random() > 0.5 ? "1" : "0", i * 14, y * 14);
+                if (y * 14 > bgCvs.height && Math.random() > 0.975) bgDrops[i] = 0;
+                bgDrops[i]++;
+            });
+        }
+
+        window.addEventListener("resize", initCanvas);
+        initCanvas();
+
+        let lastMatrixTime = 0;
+        function matrixLoop(timestamp) {
+            requestAnimationFrame(matrixLoop);
+            if (timestamp - lastMatrixTime < 40) return;
+            lastMatrixTime = timestamp;
+            drawMatrix();
+        }
+        requestAnimationFrame(matrixLoop);
+    })();
+
+    /* ===============================================================
+       CONTENT LAYER - everything below drives the interactive UI and
+       never touches the canvas above.
+       =============================================================== */
+    const STRINGS = {
+        ru: {
+            daemon_stopped: "Демон: остановлен",
+            daemon_running: (i) => `Демон: работает (${i}с)`,
+            pool_preview: (h) => `срез пула: ${h}`,
+            pool_preview_empty: "срез пула: —",
+            last_stir: (s) => `последнее обращение ${s.toFixed(1)}с назад`,
+            length_label: "длина:",
+            password_empty: "пароль: —",
+            password: (p) => `пароль: ${p}`,
+            copy: "Копировать",
+            regenerate: "Обновить",
+            run_checks: "Запустить проверки",
+            no_charset: "выберите хотя бы один набор символов",
+            strength: (bits, tier) => `${bits} бит энтропии — ${tier}`,
+            tier_weak: "слабый", tier_moderate: "средний", tier_strong: "надёжный", tier_vstrong: "очень надёжный",
+            help_title: "Справка",
+            help_body: "Этот инструмент генерирует пароли, смешивая несколько независимых источников случайности (системный генератор, тайминги, состояние ОС) криптографическим способом.\n\nЗапустить демон — включает фоновый процесс, который каждые 10 секунд подмешивает новую случайность. «срез пула» и «последнее обращение» — просто индикаторы того, что процесс жив.\n\nПароль меняется ТОЛЬКО по кнопке «Обновить», при смене длины или наборов символов — никогда сам по себе.\n\n«Запустить проверки» — техническая самодиагностика движка.",
+            close: "Закрыть",
+            checks_title: "Проверки движка",
+            sources_log_title: "источники энтропии (последние обращения):",
+            trigger_start: "запуск", trigger_regenerate: "обновить",
+            source_names: {
+                os_csprng: "генератор случайности ОС",
+                timing_jitter: "колебания времени выполнения",
+                thread_time_jitter: "колебания времени процессора",
+                scheduler_jitter: "задержки переключения задач",
+                system_state: "состояние системы",
+                system_io: "сетевая/дисковая активность",
+                previous_accum: "предыдущее состояние",
+            },
+            message_key_suffix: (msg, key) => `→ ${msg} байт данных + ${key} байт ключа (HMAC-SHA512)`,
+            check_line: {
+                source: (r) => `${STRINGS.ru.source_names[r.name] || r.name}: данные получены, ${r.len} байт`,
+                collector_nonempty: (r) => `сборщик: данные получены, ${r.len} байт`,
+                collector_differs: () => "сборщик: при повторном вызове данные отличаются",
+                pool_length: () => "пул: длина данных верна",
+                pool_differs: () => "пул: при повторном вызове данные отличаются",
+                pool_distribution: () => "пул: байты распределены равномерно",
+            },
+            checks_done: "Готово.",
+        },
+        en: {
+            daemon_stopped: "Daemon: stopped",
+            daemon_running: (i) => `Daemon: running (${i}s)`,
+            pool_preview: (h) => `pool preview: ${h}`,
+            pool_preview_empty: "pool preview: —",
+            last_stir: (s) => `last stir ${s.toFixed(1)}s ago`,
+            length_label: "length:",
+            password_empty: "password: —",
+            password: (p) => `password: ${p}`,
+            copy: "Copy",
+            regenerate: "Regenerate",
+            run_checks: "Run Sanity Checks",
+            no_charset: "select at least one character set",
+            strength: (bits, tier) => `${bits} bits of entropy — ${tier}`,
+            tier_weak: "weak", tier_moderate: "moderate", tier_strong: "strong", tier_vstrong: "very strong",
+            help_title: "Help",
+            help_body: "This tool generates passwords by cryptographically mixing several independent sources of randomness (the system generator, timing jitter, OS state).\n\nStart Daemon turns on a background process that stirs in fresh randomness every 10 seconds. \"pool preview\" and \"last stir\" are just indicators that it's alive.\n\nThe password changes ONLY via Regenerate, or by changing the length or character sets - never on its own.\n\nRun Sanity Checks is a technical self-test of the engine.",
+            close: "Close",
+            checks_title: "Engine Checks",
+            sources_log_title: "entropy sources (recent accesses):",
+            trigger_start: "start", trigger_regenerate: "regenerate",
+            source_names: {
+                os_csprng: "OS randomness generator",
+                timing_jitter: "execution timing variance",
+                thread_time_jitter: "processor timing variance",
+                scheduler_jitter: "task-switch delays",
+                system_state: "system state",
+                system_io: "network/disk activity",
+                previous_accum: "previous state",
+            },
+            message_key_suffix: (msg, key) => `→ ${msg}B data + ${key}B key (HMAC-SHA512)`,
+            check_line: {
+                source: (r) => `${STRINGS.en.source_names[r.name] || r.name}: data received, ${r.len} bytes`,
+                collector_nonempty: (r) => `collector: data received, ${r.len} bytes`,
+                collector_differs: () => "collector: repeated call gives different data",
+                pool_length: () => "pool: data length correct",
+                pool_differs: () => "pool: repeated call gives different data",
+                pool_distribution: () => "pool: byte distribution is even",
+            },
+            checks_done: "Done.",
+        },
+    };
+
+    let lang = "ru";
+    let running = false;
+    let lastPoolPreview = null;
+    let lastStirTime = null;
+    let apiReady = false;
+
+    function t(key, ...args) {
+        const v = STRINGS[lang][key];
+        return typeof v === "function" ? v(...args) : v;
+    }
+
+    function currentCharset() {
+        return {
+            lower: document.getElementById("lowerChk").checked,
+            upper: document.getElementById("upperChk").checked,
+            digits: document.getElementById("digitsChk").checked,
+            symbols: document.getElementById("symbolsChk").checked,
+        };
+    }
+
+    function currentLength() {
+        const n = parseInt(document.getElementById("lengthInput").value, 10);
+        if (isNaN(n)) return 20;
+        return Math.max(4, Math.min(128, n));
+    }
+
+    function tierKey(bits) {
+        if (bits < 40) return "tier_weak";
+        if (bits < 60) return "tier_weak";
+        if (bits < 80) return "tier_moderate";
+        return bits < 100 ? "tier_strong" : "tier_vstrong";
+    }
+    function tierClass(bits) {
+        if (bits < 60) return "weak";
+        if (bits < 80) return "moderate";
+        return bits < 100 ? "strong" : "very-strong";
+    }
+
+    function sourceLabel(name) {
+        return STRINGS[lang].source_names[name] || name;
+    }
+
+    function logSources(triggerKey, breakdown) {
+        if (!breakdown || !breakdown.length) return;
+        const messageParts = breakdown.filter(([n]) => !n.includes("salt"));
+        const saltTotal = breakdown.filter(([n]) => n.includes("salt")).reduce((s, [, b]) => s + b, 0);
+        const messageTotal = messageParts.reduce((s, [, b]) => s + b, 0);
+        const partsStr = messageParts.map(([n, b]) => `${sourceLabel(n)}=${b}B`).join(", ");
+        const ts = new Date().toLocaleTimeString();
+        const el = document.getElementById("sourcesLog");
+        const line = document.createElement("div");
+        line.innerHTML = `<span class="ts">${ts}</span> <span class="trig">${t("trigger_" + triggerKey)}:</span> ${partsStr} ${t("message_key_suffix", messageTotal, saltTotal)}`;
+        el.appendChild(line);
+        el.scrollTop = el.scrollHeight;
+    }
+
+    function applyLanguage() {
+        document.getElementById("langBtn").textContent = lang === "ru" ? "EN" : "RU";
+        document.getElementById("lengthLbl").textContent = t("length_label");
+        document.getElementById("copyBtn").textContent = t("copy");
+        document.getElementById("regenBtn").textContent = t("regenerate");
+        document.getElementById("checksBtn").textContent = t("run_checks");
+        document.getElementById("helpTitle").textContent = t("help_title");
+        document.getElementById("helpBody").textContent = t("help_body");
+        document.getElementById("closeHelp").textContent = t("close");
+        document.getElementById("checksTitle").textContent = t("checks_title");
+        document.getElementById("closeChecks").textContent = t("close");
+        document.getElementById("sourcesLogTitle").textContent = t("sources_log_title");
+        setDaemonButton(running);
+        if (!running) {
+            document.getElementById("poolPreview").textContent = t("pool_preview_empty");
+            document.getElementById("passwordField").textContent = t("password_empty");
+            document.getElementById("lastStir").textContent = "";
+        }
+    }
+
+    function setDaemonButton(isRunning) {
+        const btn = document.getElementById("daemonBtn");
+        btn.classList.toggle("running", isRunning);
+        btn.classList.toggle("stopped", !isRunning);
+        btn.textContent = isRunning ? t("daemon_running", 10) : t("daemon_stopped");
+    }
+
+    function applyPasswordResult(res) {
+        const strengthEl = document.getElementById("strengthLbl");
+        if (res.error === "no_charset") {
+            document.getElementById("passwordField").textContent = t("password_empty");
+            strengthEl.textContent = t("no_charset");
+            strengthEl.className = "weak";
+        } else {
+            document.getElementById("passwordField").textContent = t("password", res.password);
+            strengthEl.textContent = t("strength", res.bits, t(tierKey(res.bits)));
+            strengthEl.className = tierClass(res.bits);
+        }
+    }
+
+    async function toggleDaemon() {
+        const cs = currentCharset();
+        const res = await window.pywebview.api.toggle_daemon(currentLength(), cs.lower, cs.upper, cs.digits, cs.symbols);
+        running = res.running;
+        setDaemonButton(running);
+        if (running) {
+            lastPoolPreview = res.pool_preview;
+            lastStirTime = Date.now();
+            document.getElementById("poolPreview").textContent = t("pool_preview", res.pool_preview);
+            applyPasswordResult(res);
+            logSources("start", res.breakdown);
+        } else {
+            document.getElementById("poolPreview").textContent = t("pool_preview_empty");
+            document.getElementById("passwordField").textContent = t("password_empty");
+            document.getElementById("lastStir").textContent = "";
+            document.getElementById("strengthLbl").textContent = "";
+            document.getElementById("strengthLbl").className = "";
+            document.getElementById("sourcesLog").innerHTML = "";
+        }
+    }
+
+    async function pollLoop() {
+        if (!apiReady || !running) return;
+        const res = await window.pywebview.api.poll();
+        if (!res.running) return;
+        if (res.pool_preview !== lastPoolPreview) {
+            lastPoolPreview = res.pool_preview;
+            lastStirTime = Date.now();
+        }
+        document.getElementById("poolPreview").textContent = t("pool_preview", res.pool_preview);
+        document.getElementById("lastStir").textContent = t("last_stir", (Date.now() - lastStirTime) / 1000);
+    }
+
+    async function regenerate() {
+        if (!running) return;
+        const cs = currentCharset();
+        const res = await window.pywebview.api.regenerate(currentLength(), cs.lower, cs.upper, cs.digits, cs.symbols);
+        if (res.pool_preview) {
+            lastPoolPreview = res.pool_preview;
+            lastStirTime = Date.now();
+        }
+        applyPasswordResult(res);
+        logSources("regenerate", res.breakdown);
+    }
+
+    async function runChecks() {
+        const results = await window.pywebview.api.run_checks();
+        const out = document.getElementById("checksOutput");
+        out.innerHTML = "";
+        for (const r of results) {
+            const line = document.createElement("div");
+            line.className = "check-line " + (r.ok ? "ok" : "fail");
+            const text = STRINGS[lang].check_line[r.kind](r);
+            line.textContent = `[${r.ok ? "OK" : "FAIL"}] ${text}`;
+            out.appendChild(line);
+        }
+        const done = document.createElement("div");
+        done.textContent = t("checks_done");
+        out.appendChild(done);
+        document.getElementById("checksModal").classList.remove("hidden");
+    }
+
+    function copyPassword() {
+        const text = document.getElementById("passwordField").textContent.split(": ").slice(1).join(": ");
+        if (text && text !== "—") navigator.clipboard.writeText(text);
+    }
+
+    document.getElementById("daemonBtn").addEventListener("click", toggleDaemon);
+    document.getElementById("regenBtn").addEventListener("click", regenerate);
+    document.getElementById("copyBtn").addEventListener("click", copyPassword);
+    document.getElementById("checksBtn").addEventListener("click", runChecks);
+    document.getElementById("langBtn").addEventListener("click", () => { lang = lang === "ru" ? "en" : "ru"; applyLanguage(); });
+    document.getElementById("helpBtn").addEventListener("click", () => document.getElementById("helpModal").classList.remove("hidden"));
+    document.getElementById("closeHelp").addEventListener("click", () => document.getElementById("helpModal").classList.add("hidden"));
+    document.getElementById("closeChecks").addEventListener("click", () => document.getElementById("checksModal").classList.add("hidden"));
+    document.getElementById("lengthInput").addEventListener("change", regenerate);
+    for (const id of ["lowerChk", "upperChk", "digitsChk", "symbolsChk"]) {
+        document.getElementById(id).addEventListener("change", regenerate);
+    }
+
+    applyLanguage();
+    setInterval(pollLoop, 500);
+
+    window.addEventListener("pywebviewready", () => { apiReady = true; });
+</script>
+</body>
+</html>
