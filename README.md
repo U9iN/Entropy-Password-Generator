@@ -4,9 +4,6 @@
 
 <br>
 
-# 🔐 E.P.G. — Entropy Password Generator
-**Десктопный генератор паролей для Windows на базе криптографического пула энтропии**
-
 [![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?style=flat-square&logo=windows&logoColor=white)]()
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat-square&logo=python&logoColor=white)]()
 [![Crypto](https://img.shields.io/badge/Crypto-HMAC--SHA512%20%7C%20SHAKE256-2de2e6?style=flat-square)]()
